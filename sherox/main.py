@@ -18,6 +18,7 @@ _SUBCOMMANDS = {
     "sid":          "Speaker identification",
     "lid":          "Language identification",
     "segment":      "VAD-based audio segmentation",
+    "align":        "Word-level forced alignment of a transcript to audio",
     "kws":          "Keyword / wake-word spotting",
     "wake":         "Wake-word detection (livekit-wakeword, custom ONNX)",
     "server":       "HTTP/WebSocket ASR server",

@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from sherox import SherpaError
 from sherox.utils import download_file
 
 
@@ -17,7 +18,7 @@ class TestDownloadFile:
 
         mock_response = MagicMock()
         mock_response.status = 200
-        mock_response.headers = {"Content-Length": "100"}
+        mock_response.headers = {"Content-Length": "12"}
         mock_response.__enter__ = MagicMock(return_value=mock_response)
         mock_response.__exit__ = MagicMock(return_value=False)
         mock_response.read.side_effect = [b"chunk1", b"chunk2", b""]
@@ -55,7 +56,7 @@ class TestDownloadFile:
 
         mock_response = MagicMock()
         mock_response.status = 206
-        mock_response.headers = {"Content-Range": "bytes 8-15/16"}
+        mock_response.headers = {"Content-Range": "bytes 8-12/13"}
         mock_response.__enter__ = MagicMock(return_value=mock_response)
         mock_response.__exit__ = MagicMock(return_value=False)
         mock_response.read.side_effect = [b"chunk", b""]
@@ -86,3 +87,37 @@ class TestDownloadFile:
 
         assert dest.exists()
         assert dest.read_text() == "chunk1"
+
+
+def _response(chunks, headers):
+    r = MagicMock()
+    r.status = 200
+    r.headers = headers
+    r.__enter__ = MagicMock(return_value=r)
+    r.__exit__ = MagicMock(return_value=False)
+    r.read.side_effect = chunks
+    return r
+
+
+class TestDownloadFileRobustness:
+    def test_truncated_download_is_an_error_and_keeps_partial(self, tmp_path):
+        dest = tmp_path / "f.bin"
+        resp = _response([b"abc", b""], {"Content-Length": "10"})
+        with patch("urllib.request.urlopen", return_value=resp):
+            with pytest.raises(SherpaError, match="incomplete"):
+                download_file("http://example.com/f", dest)
+        assert dest.read_bytes() == b"abc"      # kept so a retry can resume
+
+    def test_passes_a_finite_timeout(self, tmp_path):
+        resp = _response([b"abc", b""], {"Content-Length": "3"})
+        with patch("urllib.request.urlopen", return_value=resp) as m:
+            download_file("http://example.com/f", tmp_path / "f")
+        assert 0 < m.call_args.kwargs["timeout"] < 600
+
+    def test_to_stderr_keeps_stdout_clean(self, tmp_path, capsys):
+        resp = _response([b"abc", b""], {"Content-Length": "3"})
+        with patch("urllib.request.urlopen", return_value=resp):
+            download_file("http://example.com/f", tmp_path / "f", to_stderr=True)
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "Downloading from" in captured.err and "100%" in captured.err

@@ -1607,6 +1607,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+align = [
+    { name = "onnxruntime" },
+]
 benchmark = [
     { name = "editdistance" },
     { name = "soxr" },
@@ -1647,6 +1650,7 @@ requires-dist = [
     { name = "livekit-wakeword", marker = "extra == 'wake'", specifier = ">=0.2.0" },
     { name = "noisereduce", marker = "extra == 'denoise'", specifier = ">=3.0" },
     { name = "numpy", specifier = ">=2.2.6" },
+    { name = "onnxruntime", marker = "extra == 'align'", specifier = ">=1.17" },
     { name = "piper-plus", marker = "extra == 'tts-ja'" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-cov", marker = "extra == 'dev'" },
@@ -1660,7 +1664,7 @@ requires-dist = [
     { name = "soxr", marker = "extra == 'benchmark'", specifier = ">=0.3.0" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'server'", specifier = ">=0.32.0" },
 ]
-provides-extras = ["dev", "server", "tts-ja", "denoise", "wake", "benchmark"]
+provides-extras = ["dev", "server", "tts-ja", "align", "denoise", "wake", "benchmark"]
 
 [[package]]
 name = "sherpa-onnx"

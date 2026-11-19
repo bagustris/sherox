@@ -22,3 +22,7 @@ class AudioError(SherpaError):
 
 class ConfigError(SherpaError):
     """Raised for invalid configuration or arguments."""
+
+
+class AlignmentError(SherpaError):
+    """Raised when forced alignment cannot be performed for the given input."""

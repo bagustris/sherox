@@ -180,6 +180,7 @@ _OTHER_MODELS: list[tuple[str, str, str, str, str, str]] = [
                 "en", "online",  "~3 MB",   "Zipformer keyword spotter (GigaSpeech 3.3M)"),
     ("vad",     "silero_vad",                  "language-independent", "both", "~2 MB",   "Silero VAD (offline segmentation)"),
     ("vad",     "ten-vad.int8.onnx",           "language-independent", "both", "~2 MB",   "TEN-VAD int8 (faster alternative)"),
+    ("align",   "wav2vec2-base-960h-onnx",     "en",         "offline", "~95 MB",  "wav2vec2 CTC (int8) for forced alignment (sherox.align; needs sherox[align])"),
     ("punct",   "punct-ct-transformer-zh-en",  "zh, en",     "offline", "~40 MB",  "CT-Transformer punctuation restoration"),
     ("diarization", "sherpa-onnx-pyannote-segmentation-3-0", "en", "offline", "~30 MB", "Pyannote speaker segmentation"),
     ("diarization", "nemo_en_speakerverification_speakernet", "en", "offline", "~22 MB", "NeMo speaker embedding extractor"),

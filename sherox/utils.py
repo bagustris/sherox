@@ -37,29 +37,44 @@ def render_mic_level(chunk, prefix: str = "  ") -> None:
     sys.stdout.flush()
 
 
-def download_file(url: str, dest: Path | str) -> None:
+_DOWNLOAD_TIMEOUT = 60  # seconds without data before a download attempt fails
+
+
+def download_file(url: str, dest: Path | str, *, to_stderr: bool = False) -> None:
     """Download ``url`` to ``dest`` with a simple percentage progress callback.
-    Supports resuming interrupted downloads."""
+
+    Supports resuming interrupted downloads. A stalled connection fails after
+    ``_DOWNLOAD_TIMEOUT`` seconds, and a transfer that ends short of the
+    advertised size is an error (the partial file is kept so a retry resumes).
+    With ``to_stderr=True`` all messages and progress go to stderr, for callers
+    whose stdout must stay machine-readable.
+    """
     dest = Path(dest)
-    _info(f"Downloading from:\n  {url}")
-    _info("This may take a few minutes…")
+    out = sys.stderr if to_stderr else sys.stdout
+    log = _err_console if to_stderr else _console
+
+    def info(msg: str) -> None:
+        log.print(f"[bold green]\\[info][/bold green] {msg}")
+
+    info(f"Downloading from:\n  {url}")
+    info("This may take a few minutes…")
 
     # Check if partial download exists
     existing_size = 0
     if dest.exists():
         existing_size = dest.stat().st_size
         if existing_size > 0:
-            _info(f"Resuming from {existing_size} bytes…")
+            info(f"Resuming from {existing_size} bytes…")
 
     req = urllib.request.Request(url)
     if existing_size > 0:
         req.add_header("Range", f"bytes={existing_size}-")
 
     try:
-        with urllib.request.urlopen(req) as response:
+        with urllib.request.urlopen(req, timeout=_DOWNLOAD_TIMEOUT) as response:
             # If we requested a range but server ignored it (200 OK), don't append
             if existing_size > 0 and response.status != 206:
-                _info("Server does not support resume — restarting download…")
+                info("Server does not support resume — restarting download…")
                 existing_size = 0
                 dest.write_bytes(b"")
 
@@ -83,18 +98,23 @@ def download_file(url: str, dest: Path | str) -> None:
                     downloaded += len(chunk)
                     if total_size > 0:
                         pct = min(100, downloaded * 100 // total_size)
-                        sys.stdout.write(f"\r  {pct}%")
-                        sys.stdout.flush()
+                        out.write(f"\r  {pct}%")
+                        out.flush()
     except urllib.error.HTTPError as exc:
         if exc.code == 416 and existing_size > 0:
-            _info("Server rejected resume range — restarting download…")
+            info("Server rejected resume range — restarting download…")
             dest.unlink(missing_ok=True)
-            download_file(url, dest)
+            download_file(url, dest, to_stderr=to_stderr)
             return
         _error(f"Download failed: {exc}")
     except Exception as exc:  # noqa: BLE001
         _error(f"Download failed: {exc}")
-    print()
+    if total_size > 0 and downloaded != total_size:
+        _error(
+            f"Download incomplete: received {downloaded} of {total_size} bytes "
+            f"for {url}. Re-run to resume."
+        )
+    print(file=out)
 
 
 def run_cli(impl: Callable[[], None]) -> None:

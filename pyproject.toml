@@ -1,7 +1,7 @@
 [project]
 name = "sherox"
 version = "0.9.0"
-description = "SHErpa OnnX toolkit — streaming ASR, VAD segmentation, and TTS"
+description = "SHErpa OnnX toolkit — streaming ASR, VAD segmentation, forced alignment, and TTS"
 requires-python = ">=3.11"
 dependencies = [
     "sherpa-onnx>=1.12.28",
@@ -23,6 +23,7 @@ build-backend = "setuptools.build_meta"
 "sherox.sid"     = "sherox.sid:main"
 "sherox.lid"     = "sherox.lid:main"
 "sherox.segment" = "sherox.segment:main"
+"sherox.align"   = "sherox.align:main"
 "sherox.tts"     = "sherox.tts:main"
 "sherox.kws"     = "sherox.kws:main"
 "sherox.wake"    = "sherox.wake:main"
@@ -48,6 +49,9 @@ server = [
 ]
 tts-ja = [
     "piper-plus",
+]
+align = [
+    "onnxruntime>=1.17",
 ]
 denoise = [
     "noisereduce>=3.0",

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `sherox.align`: word-level forced alignment of an existing transcript to
+  audio, writing documented JSON (`schema_version` 1) with per-word
+  `start`/`end`/`score`/`status`. Words that cannot be aligned are kept as
+  `unaligned` with `null` timestamps; failures exit 1 with a clear message.
+  Backends sit behind `sherox.alignment.AlignerBackend`; the default `ctc`
+  backend runs a wav2vec2 CTC ONNX model (English, auto-downloaded, ~95 MB) via
+  `onnxruntime` with a NumPy Viterbi — no PyTorch. Custom CTC models via
+  `--model-dir`. Install with the new optional extra `sherox[align]`. See
+  `ALIGN_MODEL.md`.
+
+### Changed
+- `download_file` now times out stalled connections (60 s), fails when a
+  transfer ends short of the advertised size (the partial file is kept so a
+  retry resumes), and accepts `to_stderr=True` to keep stdout clean.
+
 ## [0.9.0] - 2026-07-15
 
 ### Added

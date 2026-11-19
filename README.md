@@ -16,6 +16,7 @@ Supported tasks:
 - Keyword Spotting (KWS): `sherox.kws`
 - Wake-word Detection: `sherox.wake`
 - Speech Segmentation: `sherox.segment`
+- Forced Alignment (word timestamps): `sherox.align`
 
 ## Features
 
@@ -51,7 +52,7 @@ uv pip install git+https://github.com/bagustris/audiokit
 uv pip install -e .
 ```
 
-> **Note:** This installs all dependencies and registers the `sherox`, `sherox.asr`, `sherox.sid`, `sherox.segment`, `sherox.tts`, `sherox.kws`, `sherox.wake`, `sherox.lid`, `sherox.server`, and `sherox.models` CLI commands.
+> **Note:** This installs all dependencies and registers the `sherox`, `sherox.asr`, `sherox.sid`, `sherox.segment`, `sherox.align`, `sherox.tts`, `sherox.kws`, `sherox.wake`, `sherox.lid`, `sherox.server`, and `sherox.models` CLI commands.
 >
 > Japanese TTS uses the `piper-plus` backend rather than `sherpa-onnx`. Install it with:
 > ```bash
@@ -430,6 +431,31 @@ Model paths must point to `.onnx` files. Relative names are also searched under 
 --listening              Show RMS energy bar for mic level calibration
 ```
 
+### `sherox.align`
+
+Word-level forced alignment of an existing transcript to audio (no ASR).
+Requires the optional extra: `pip install 'sherox[align]'`.
+
+```bash
+sherox.align --wav audio.wav --transcript transcript.txt \
+             --language en --output alignment.json
+```
+
+```
+--wav PATH               Audio file, mono (required)
+--transcript PATH        UTF-8 text file with the transcript (required)
+--language CODE          Transcript language (default: en; default model: en only)
+--output PATH            Write JSON here (default: stdout)
+--backend {ctc}          Alignment backend (default: ctc)
+--model-dir DIR          Custom CTC ONNX model directory (default: auto-downloaded)
+--device {cpu,cuda}      Inference device (default: cpu)
+--threads INT            CPU thread count (default: 4)
+```
+
+Output (abridged): `{"schema_version": 1, "language": "en", "words": [{"index": 0, "word": "Hello,", "start": 0.02, "end": 0.361, "score": 0.635, "status": "aligned"}, ...]}`.
+Words that cannot be aligned are kept with `"status": "unaligned"` and `null` timestamps.
+See [ALIGN_MODEL.md](ALIGN_MODEL.md) for the JSON schema, backends, supported languages and limitations.
+
 ### `sherox.server`
 
 ```
@@ -466,6 +492,8 @@ sherox/
 ├── asr.py         # sherox.asr — CLI, model download, validation, dispatch
 ├── sid.py         # sherox.sid — Speaker identification CLI
 ├── segment.py     # sherox.segment — VAD-based audio segmentation CLI
+├── align.py       # sherox.align — word-level forced alignment CLI
+├── alignment/     # Alignment backend interface + CTC/onnxruntime backend
 ├── tts.py         # sherox.tts — Text-to-speech CLI
 ├── wake.py        # sherox.wake — Wake-word detection CLI
 ├── asr_engine.py  # Unified model loading: ASR, VAD, diarization, embeddings
