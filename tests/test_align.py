@@ -114,13 +114,17 @@ class TestRun:
         assert last["word"] == "42" and last["status"] == "unaligned"
         assert last["start"] is None and last["end"] is None and last["score"] is None
 
-    def test_output_oserror_is_a_clean_error(self, files, tmp_path, fake_backend):
+    def test_output_oserror_is_a_clean_error(self, files, tmp_path, fake_backend, capsys):
         blocker = tmp_path / "file"
         blocker.write_text("x")
+        target = blocker / "out.json"
         with pytest.raises(SystemExit) as e:
             _run(["--wav", str(files[0]), "--transcript", str(files[1]),
-                  "--output", str(blocker / "out.json")])      # parent is a file
+                  "--output", str(target)])                    # parent is a file
         assert e.value.code == 1
+        err = capsys.readouterr().err.replace("\n", "")   # rich wraps long lines
+        assert "[error]" in err and "Could not write output" in err
+        assert "out.json" in err
 
     def test_failed_write_keeps_existing_output(self, files, tmp_path, fake_backend):
         out = tmp_path / "o.json"

@@ -174,15 +174,15 @@ def _main_impl() -> None:
     args = parse_args()
     try:
         result = run_alignment(args)
+        payload = json.dumps(result.to_dict(), ensure_ascii=False, indent=2)
+        if args.output:
+            out = _write_output(Path(args.output), payload + "\n")
+            _info(f"Wrote {out}")
+        else:
+            sys.stdout.write(payload + "\n")
     except SherpaError as exc:
         _err_console.print(f"[bold red]\\[error][/bold red] {exc}")
         raise
-    payload = json.dumps(result.to_dict(), ensure_ascii=False, indent=2)
-    if args.output:
-        out = _write_output(Path(args.output), payload + "\n")
-        _info(f"Wrote {out}")
-    else:
-        sys.stdout.write(payload + "\n")
     if result.num_unaligned:
         missed = [w.word for w in result.words if w.status != "aligned"]
         _warn(
