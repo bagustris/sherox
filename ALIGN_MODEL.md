@@ -12,7 +12,7 @@ sherox.align --wav audio.wav --transcript transcript.txt \
 ```
 
 Without `--output` the JSON is printed to stdout (logs go to stderr, so the
-stream stays valid JSON). Exit code is `1` on any error; nothing is written.
+stream stays valid JSON). Exit code is `1` on any runtime error (nothing is written; an existing output file is left untouched) and `2` for command-line usage errors.
 
 ## Backends
 
@@ -24,7 +24,9 @@ Alignment engines sit behind a small interface
 (`sherox/alignment/base.py::AlignerBackend`). To add one (e.g. WhisperX or
 Montreal Forced Aligner), subclass it, implement `align(audio, sample_rate,
 words, language)` and register `"name": "module:Class"` in `_BACKENDS`.
-Backends are imported lazily, so heavyweight dependencies (PyTorch, WhisperX,
+The CLI passes `model_dir`, `device`, `num_threads` and `language` as keyword
+arguments to the constructor; the base class accepts and ignores them, so an
+align-only backend works unchanged. Backends are imported lazily, so heavyweight dependencies (PyTorch, WhisperX,
 MFA) never become requirements of a default install. The CLI and JSON schema do
 not change when a backend is added.
 
@@ -36,7 +38,7 @@ not change when a backend is added.
 
 | Model | Language | Size | Location |
 |-------|----------|------|----------|
-| `wav2vec2-base-960h` (int8 ONNX, [Xenova export](https://huggingface.co/Xenova/wav2vec2-base-960h)) | `en` | ~95 MB | `models/wav2vec2-base-960h-onnx` (auto-downloaded, shared cache) |
+| `wav2vec2-base-960h` (int8 ONNX, [Xenova export](https://huggingface.co/Xenova/wav2vec2-base-960h)) | `en` | ~95 MB | `~/.cache/sherox/models/wav2vec2-base-960h-onnx` (auto-downloaded on first use; override the cache root with `SHEROX_CACHE_DIR`) |
 
 The default model supports **English only**; other `--language` values are
 rejected with an error. To align another language, pass `--model-dir` pointing
@@ -93,7 +95,10 @@ With `--model-dir` the `--language` value is just recorded in the output.
 - **Resolution** is one model frame, ~20 ms.
 - **Long audio.** Inference runs in 20 s windows (2 s of context each side), so
   memory stays flat: on CPU a 5-minute file aligned in ~18 s using ~1.3 GB
-  RSS, and results match a single pass to within one frame. The limit is the
+  RSS. Each window sees only ±2 s of context rather than the whole file, so
+  results can differ slightly from a single pass (in a 2-minute test every word
+  start was within one 20 ms frame of the single-pass result; not guaranteed
+  for all audio or models). The limit is the
   Viterbi trellis (`frames × 2·characters` ≤ 400 M cells, roughly 10–15 minutes
   of speech); beyond that `sherox.align` fails with a clear error — split the
   recording (e.g. with `sherox.segment`) and align the pieces separately.

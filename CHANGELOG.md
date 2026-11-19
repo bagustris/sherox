@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--model-dir`. Install with the new optional extra `sherox[align]`. See
   `ALIGN_MODEL.md`.
 
+### Changed
+- `download_file` now times out stalled connections (60 s), fails when a
+  transfer ends short of the advertised size (the partial file is kept so a
+  retry resumes), and accepts `to_stderr=True` to keep stdout clean.
+
 ## [0.9.0] - 2026-07-15
 
 ### Added

@@ -212,20 +212,78 @@ class TestModelResolution:
             with pytest.raises(ModelNotFoundError, match=r"\.onnx"):
                 CtcOnnxBackend(model_dir=str(d))
 
-    def test_default_model_is_downloaded_once(self, tmp_path):
+    def test_default_model_is_downloaded_once_into_cache(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("SHEROX_CACHE_DIR", str(tmp_path / "cache"))
         calls = []
 
-        def fake_download(url, dest):
+        def fake_download(url, dest, to_stderr=False):
+            assert to_stderr is True            # stdout must stay clean for JSON
             calls.append(Path(dest).name)
             Path(dest).write_text("{}")
 
         with patch.object(ctc, "_download_file", fake_download):
-            d, is_default = ctc.resolve_model_dir(None, tmp_path)
-            assert is_default and d.is_dir()
+            d, is_default = ctc.resolve_model_dir(None)
+            assert is_default and d == tmp_path / "cache" / ctc.DEFAULT_MODEL_NAME
             assert sorted(calls) == sorted(ctc._DEFAULT_MODEL_FILES)
-            assert not (d.parent / (d.name + ".part")).exists()
-            ctc.resolve_model_dir(None, tmp_path)           # cached now
+            assert [p.name for p in d.parent.iterdir()] == [d.name]   # no .part left
+            ctc.resolve_model_dir(None)                               # cached now
         assert len(calls) == len(ctc._DEFAULT_MODEL_FILES)
+
+    def test_failed_download_leaves_nothing_behind(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("SHEROX_CACHE_DIR", str(tmp_path / "cache"))
+        n = []
+
+        def flaky(url, dest, to_stderr=False):
+            n.append(1)
+            if len(n) == 2:
+                raise ModelNotFoundError("boom")
+            Path(dest).write_text("{}")
+
+        with patch.object(ctc, "_download_file", flaky):
+            with pytest.raises(ModelNotFoundError):
+                ctc.resolve_model_dir(None)
+        cache = tmp_path / "cache"
+        assert not cache.exists() or list(cache.iterdir()) == []
+
+    def test_incomplete_cached_model_is_redownloaded(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("SHEROX_CACHE_DIR", str(tmp_path / "cache"))
+        stale = ctc.default_model_dir()
+        stale.mkdir(parents=True)
+        (stale / "vocab.json").write_text("{}")          # model.onnx missing
+
+        def fake_download(url, dest, to_stderr=False):
+            Path(dest).write_text("x")
+
+        with patch.object(ctc, "_download_file", fake_download):
+            d, _ = ctc.resolve_model_dir(None)
+        assert (d / "model.onnx").is_file()
+
+    def test_lost_download_race_uses_the_winner(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("SHEROX_CACHE_DIR", str(tmp_path / "cache"))
+        target = ctc.default_model_dir()
+
+        def fake_download(url, dest, to_stderr=False):
+            Path(dest).write_text("mine")
+            # another process publishes the model while we are downloading
+            if not target.exists():
+                target.mkdir(parents=True)
+                for f in ctc._DEFAULT_MODEL_FILES:
+                    (target / f).write_text("theirs")
+
+        with patch.object(ctc, "_download_file", fake_download):
+            d, _ = ctc.resolve_model_dir(None)
+        assert (d / "model.onnx").read_text() == "theirs"
+        assert [p.name for p in d.parent.iterdir()] == [d.name]
+
+    def test_invalid_vocab_values(self, tmp_path):
+        d = _make_model_dir(tmp_path, {"<pad>": None, "a": 1})
+        with patch.object(ctc, "_require_onnxruntime", return_value=_fake_ort([0])):
+            with pytest.raises(ModelNotFoundError, match="Invalid vocab"):
+                CtcOnnxBackend(model_dir=str(d))
+        (d / "vocab.json").write_text("[1, 2]")
+        with patch.object(ctc, "_require_onnxruntime", return_value=_fake_ort([0])):
+            with pytest.raises(ModelNotFoundError, match="Invalid vocab"):
+                CtcOnnxBackend(model_dir=str(d))
 
 
 class TestRegistry:
@@ -316,3 +374,52 @@ class TestEarlyFailures:
         ort = _fake_ort([0])
         with patch.object(ctc, "_require_onnxruntime", return_value=ort):
             CtcOnnxBackend(model_dir=str(_make_model_dir(tmp_path)), language="ja")
+
+
+class TestLanguageNormalization:
+    @pytest.mark.parametrize("code", ["en", "EN", "English", "en_US", "en-GB", "en_gb", "eng"])
+    def test_english_variants(self, code):
+        assert ctc.normalize_language(code) == "en"
+
+    def test_other_language_unchanged(self):
+        assert ctc.normalize_language("ja_JP") == "ja-jp"
+
+
+class TestFrameTiming:
+    def test_standard_wav2vec2_uses_exact_hop_and_offset(self, tmp_path):
+        be = _backend(tmp_path, [0])
+        n = 16000                                       # 1 s → 49 frames
+        frames = (n - 400) // 320 + 1
+        path = [0] * frames
+        path[10], path[11], path[30] = 2, 2, 3          # "A" frames 10-11, "B" frame 30
+        be._session = _FakeSession(path)
+        out = be.align(np.zeros(n, np.float32), 16000, ["a", "b"], "custom")
+        off = 40
+        assert out[0].start == round((10 * 320 + off) / 16000, 3) == pytest.approx(0.203)
+        assert out[0].end == round((12 * 320 + off) / 16000, 3) == pytest.approx(0.242, abs=1e-9)
+        assert out[1].start == round((30 * 320 + off) / 16000, 3)
+        # old average-stride maths would have reported 10 * (16000/49) / 16000
+        assert out[0].start != round(10 * n / frames / 16000, 3)
+
+    def test_times_never_exceed_duration(self, tmp_path):
+        be = _backend(tmp_path, [0])
+        n = 1600
+        frames = (n - 400) // 320 + 1
+        be._session = _FakeSession([0] * (frames - 1) + [2])
+        out = be.align(np.zeros(n, np.float32), 16000, ["a"], "custom")
+        assert out[0].end <= n / 16000
+
+
+class TestBackendInterface:
+    def test_align_only_backend_accepts_cli_kwargs(self):
+        class Minimal(base.AlignerBackend):
+            name = "min"
+
+            def align(self, audio, sample_rate, words, language):
+                return [base.WordAlignment(i, w) for i, w in enumerate(words)]
+
+        with patch.dict(base._BACKENDS, {"min": f"{__name__}:_MinimalHolder"}):
+            globals()["_MinimalHolder"] = Minimal
+            be = base.get_backend("min", model_dir=None, device="cpu",
+                                  num_threads=2, language="en")
+        assert be.align(np.zeros(1), 16000, ["x"], "en")[0].word == "x"

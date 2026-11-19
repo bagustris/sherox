@@ -782,7 +782,7 @@ class TestDownloadFile:
     def test_calls_urlopen_with_correct_url(self, tmp_path):
         dest = tmp_path / "file.tar.bz2"
         mock_response = MagicMock()
-        mock_response.headers = {"Content-Length": "100"}
+        mock_response.headers = {"Content-Length": "0"}
         mock_response.__enter__ = MagicMock(return_value=mock_response)
         mock_response.__exit__ = MagicMock(return_value=False)
         mock_response.read.side_effect = [b""]
@@ -808,7 +808,7 @@ class TestDownloadFile:
         mock_response.__enter__ = MagicMock(return_value=mock_response)
         mock_response.__exit__ = MagicMock(return_value=False)
         # Simulate downloading 5120 bytes (50%)
-        mock_response.read.side_effect = [b"x" * 5120, b""]
+        mock_response.read.side_effect = [b"x" * 5120, b"x" * 5120, b""]
 
         with patch("sherox.utils.urllib.request.urlopen", return_value=mock_response):
             main_module._download_file("http://example.com/file.tar.bz2", dest)

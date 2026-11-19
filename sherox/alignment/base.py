@@ -95,6 +95,14 @@ class AlignerBackend(ABC):
     #: Identifier of the underlying model, recorded in the output.
     model_name: str = ""
 
+    def __init__(self, **options) -> None:
+        """Accept (and by default ignore) the CLI's keyword options.
+
+        :func:`get_backend` passes ``model_dir``, ``device``, ``num_threads``
+        and ``language``.  A backend that only implements ``align`` therefore
+        works unchanged; override ``__init__`` to use the options.
+        """
+
     @abstractmethod
     def align(
         self,

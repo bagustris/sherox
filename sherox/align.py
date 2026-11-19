@@ -20,7 +20,9 @@ stdout carries only JSON when ``--output`` is omitted.
 """
 import argparse
 import json
+import os
 import sys
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -144,6 +146,30 @@ def run_alignment(args: argparse.Namespace) -> AlignmentResult:
     )
 
 
+def _write_output(out: Path, text: str) -> Path:
+    """Write ``text`` to ``out`` atomically.
+
+    Writes to a temp file in the same directory and renames it into place, so a
+    failure never truncates an existing alignment or leaves partial JSON.
+    Filesystem errors surface as a ``ConfigError`` naming the path.
+    """
+    tmp_name = None
+    try:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", dir=out.parent, prefix=f".{out.name}.",
+            suffix=".tmp", delete=False,
+        ) as f:
+            tmp_name = f.name
+            f.write(text)
+        os.replace(tmp_name, out)
+    except OSError as exc:
+        if tmp_name:
+            Path(tmp_name).unlink(missing_ok=True)
+        raise ConfigError(f"Could not write output '{out}': {exc}") from exc
+    return out
+
+
 def _main_impl() -> None:
     args = parse_args()
     try:
@@ -153,9 +179,7 @@ def _main_impl() -> None:
         raise
     payload = json.dumps(result.to_dict(), ensure_ascii=False, indent=2)
     if args.output:
-        out = Path(args.output)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(payload + "\n", encoding="utf-8")
+        out = _write_output(Path(args.output), payload + "\n")
         _info(f"Wrote {out}")
     else:
         sys.stdout.write(payload + "\n")

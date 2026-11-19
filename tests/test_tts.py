@@ -164,7 +164,7 @@ class TestDownloadFile:
     def test_success(self, tmp_path):
         dest = tmp_path / "model.tar.bz2"
         mock_response = MagicMock()
-        mock_response.headers = {"Content-Length": "100"}
+        mock_response.headers = {"Content-Length": "0"}
         mock_response.__enter__ = MagicMock(return_value=mock_response)
         mock_response.__exit__ = MagicMock(return_value=False)
         mock_response.read.side_effect = [b""]
@@ -183,7 +183,7 @@ class TestDownloadFile:
     def test_progress_with_positive_total(self, tmp_path):
         dest = tmp_path / "model.tar.bz2"
         mock_response = MagicMock()
-        mock_response.headers = {"Content-Length": "4096"}
+        mock_response.headers = {"Content-Length": "1024"}
         mock_response.__enter__ = MagicMock(return_value=mock_response)
         mock_response.__exit__ = MagicMock(return_value=False)
         mock_response.read.side_effect = [b"x" * 1024, b""]

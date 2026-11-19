@@ -114,6 +114,25 @@ class TestRun:
         assert last["word"] == "42" and last["status"] == "unaligned"
         assert last["start"] is None and last["end"] is None and last["score"] is None
 
+    def test_output_oserror_is_a_clean_error(self, files, tmp_path, fake_backend):
+        blocker = tmp_path / "file"
+        blocker.write_text("x")
+        with pytest.raises(SystemExit) as e:
+            _run(["--wav", str(files[0]), "--transcript", str(files[1]),
+                  "--output", str(blocker / "out.json")])      # parent is a file
+        assert e.value.code == 1
+
+    def test_failed_write_keeps_existing_output(self, files, tmp_path, fake_backend):
+        out = tmp_path / "o.json"
+        out.write_text("previous")
+        with patch("os.replace", side_effect=OSError("disk full")):
+            with pytest.raises(SystemExit) as e:
+                _run(["--wav", str(files[0]), "--transcript", str(files[1]),
+                      "--output", str(out)])
+        assert e.value.code == 1
+        assert out.read_text() == "previous"
+        assert [p.name for p in tmp_path.iterdir() if p.name.startswith(".o.json")] == []
+
     def test_stdout_is_pure_json(self, files, fake_backend, capsys):
         wav, txt = files
         _run(["--wav", str(wav), "--transcript", str(txt)])

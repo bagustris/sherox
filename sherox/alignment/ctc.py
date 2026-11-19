@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import sys
+import tempfile
 import unicodedata
-from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Optional
 
@@ -55,7 +56,7 @@ _MAX_TRELLIS_CELLS = 400_000_000
 
 
 def normalize_language(language: str) -> str:
-    lang = language.strip().lower()
+    lang = language.strip().lower().replace("_", "-")
     return _LANGUAGE_ALIASES.get(lang, lang)
 
 
@@ -156,32 +157,68 @@ def ctc_forced_align(
     return [(first[j], last[j] + 1, post_sum[j] / count[j]) for j in range(L)]
 
 
+def _frame_to_seconds(n_samples: int, n_frames: int, sample_rate: int):
+    """Return a function mapping a frame index to seconds from audio start.
+
+    For the standard wav2vec2 geometry (``(N - 400) // 320 + 1`` frames) frame
+    ``k`` covers samples ``[k*320 + 40, (k+1)*320 + 40)``: a 320-sample hop,
+    offset by half the difference between the 400-sample receptive field and
+    the hop.  Other models fall back to spreading frames evenly over the audio.
+    """
+    if n_frames == (n_samples - _MIN_SAMPLES) // _HOP + 1:
+        offset = (_MIN_SAMPLES - _HOP) // 2
+        return lambda k: (k * _HOP + offset) / sample_rate
+    stride = n_samples / n_frames / sample_rate
+    return lambda k: k * stride
+
+
 # ── Model resolution ─────────────────────────────────────────────────────────
 
-def _download_default_model(model_dir: str, _model_type: str) -> None:
-    """Fetch the default model into ``model_dir`` atomically (via a temp dir)."""
-    target = Path(model_dir)
-    tmp = target.with_name(target.name + ".part")
-    tmp.mkdir(parents=True, exist_ok=True)
-    # download_file reports progress on stdout; keep stdout clean for JSON.
-    with redirect_stdout(sys.stderr):
+def _download_default_model(target: Path) -> None:
+    """Download the default model into ``target`` atomically.
+
+    Files go into a process-unique temp directory next to ``target`` that is
+    renamed into place only once every file has downloaded completely, so a
+    failed, interrupted or concurrent run can never leave (or clobber) a
+    half-written model directory.
+    """
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = Path(tempfile.mkdtemp(prefix=f".{target.name}.", suffix=".part", dir=target.parent))
+    try:
         for fname, url in _DEFAULT_MODEL_FILES.items():
-            _download_file(url, tmp / fname)
-    tmp.rename(target)
+            # Progress goes to stderr: stdout may carry the JSON result.
+            _download_file(url, tmp / fname, to_stderr=True)
+        try:
+            tmp.rename(target)
+        except OSError:
+            if not target.is_dir():      # not a lost race with another process
+                raise
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
-def resolve_model_dir(model_dir: Optional[str], project_dir: Path) -> tuple[Path, bool]:
-    """Return ``(directory, is_default_model)``, downloading the default if needed."""
+def default_model_dir() -> Path:
+    """User-writable location of the default model (shared sherox cache)."""
+    return model_cache.cache_root() / DEFAULT_MODEL_NAME
+
+
+def resolve_model_dir(model_dir: Optional[str]) -> tuple[Path, bool]:
+    """Return ``(directory, is_default_model)``, downloading the default if needed.
+
+    The default model lives in the shared cache (``SHEROX_CACHE_DIR`` or
+    ``~/.cache/sherox/models``) rather than under the installed package, so it
+    works from read-only installs.
+    """
     if model_dir:
         p = Path(model_dir)
         if not p.is_dir():
             raise ModelNotFoundError(f"Alignment model directory not found: {p}")
         return p, False
-    target = project_dir / "models" / DEFAULT_MODEL_NAME
-    try:
-        model_cache.ensure_model(str(target), "align_ctc", _download_default_model)
-    except FileNotFoundError as exc:
-        raise ModelNotFoundError(str(exc)) from exc
+    target = default_model_dir()
+    if not all((target / f).is_file() for f in _DEFAULT_MODEL_FILES):
+        if target.exists():          # incomplete leftovers from an older run
+            shutil.rmtree(target, ignore_errors=True)
+        _download_default_model(target)
     return target, True
 
 
@@ -221,7 +258,6 @@ class CtcOnnxBackend(AlignerBackend):
         model_dir: Optional[str] = None,
         device: str = "cpu",
         num_threads: int = 4,
-        project_dir: Optional[Path] = None,
         language: Optional[str] = None,
     ) -> None:
         if device not in ("cpu", "cuda"):
@@ -230,8 +266,7 @@ class CtcOnnxBackend(AlignerBackend):
         # Reject an unsupported language *before* downloading the default model.
         if not model_dir and language is not None:
             _check_default_language(language)
-        project_dir = project_dir or Path(__file__).resolve().parent.parent.parent
-        self.model_dir, self.is_default_model = resolve_model_dir(model_dir, project_dir)
+        self.model_dir, self.is_default_model = resolve_model_dir(model_dir)
         self.model_name = (
             "wav2vec2-base-960h" if self.is_default_model else self.model_dir.name
         )
@@ -268,7 +303,7 @@ class CtcOnnxBackend(AlignerBackend):
         try:
             vocab = json.loads(vocab_path.read_text(encoding="utf-8"))
             vocab = {str(k): int(v) for k, v in vocab.items()}
-        except (ValueError, AttributeError) as exc:
+        except (ValueError, TypeError, AttributeError) as exc:
             raise ModelNotFoundError(f"Invalid vocab.json: {exc}") from exc
         blank = next((vocab[t] for t in _BLANK_CANDIDATES if t in vocab), None)
         if blank is None:
@@ -408,14 +443,15 @@ class CtcOnnxBackend(AlignerBackend):
         check_trellis_size((audio.size - _MIN_SAMPLES) // _HOP + 1, 2 * len(labels) + 1)
         log_probs = self._log_probs(audio)
         spans = ctc_forced_align(log_probs, labels, self.blank_id)
-        stride = audio.size / log_probs.shape[0] / sample_rate   # seconds / frame
+        to_seconds = _frame_to_seconds(audio.size, log_probs.shape[0], sample_rate)
+        duration = audio.size / sample_rate
 
         for i, (lo, hi) in word_label_range.items():
             word_spans = [spans[j] for j in range(lo, hi)]
             frames = sum(e - s for s, e, _ in word_spans)
             r = results[i]
-            r.start = round(word_spans[0][0] * stride, 3)
-            r.end = round(word_spans[-1][1] * stride, 3)
+            r.start = round(min(to_seconds(word_spans[0][0]), duration), 3)
+            r.end = round(min(to_seconds(word_spans[-1][1]), duration), 3)
             r.score = round(
                 sum(p * (e - s) for s, e, p in word_spans) / frames, 4
             )
